@@ -1,10 +1,13 @@
 
 import streamlit as st
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 
+from sklearn.linear_model import LinearRegression
+
 # ==========================================
-# PAGE CONFIGURATION
+# PAGE CONFIG
 # ==========================================
 st.set_page_config(
     page_title="Sales Forecasting System",
@@ -18,27 +21,29 @@ st.set_page_config(
 @st.cache_data
 def load_data():
     df = pd.read_csv("data/train.csv")
-
     df.columns = df.columns.str.strip().str.lower()
 
     df["date"] = pd.to_datetime(df["date"])
+    df["sales"] = pd.to_numeric(df["sales"], errors="coerce")
+
+    df = df.dropna(subset=["date", "sales"])
 
     return df
 
 df = load_data()
 
 # ==========================================
-# TITLE
+# HEADER
 # ==========================================
-st.title("Sales Forecasting System")
+st.title("📊 Sales Forecasting System")
 
 st.write(
-    "An interactive dashboard for analysing sales performance, "
-    "stores, products, and sales trends."
+    "Analyse historical sales performance and estimate "
+    "future sales to support business planning."
 )
 
 # ==========================================
-# SIDEBAR FILTERS
+# SIDEBAR
 # ==========================================
 st.sidebar.header("Dashboard Filters")
 
@@ -87,7 +92,7 @@ filtered_df = filtered_df[
 ]
 
 # ==========================================
-# DASHBOARD METRICS
+# METRICS
 # ==========================================
 st.subheader("Sales Overview")
 
@@ -99,14 +104,14 @@ col1, col2, col3 = st.columns(3)
 
 col1.metric("Total Records", f"{total_records:,}")
 col2.metric("Total Sales", f"{total_sales:,.0f}")
-col3.metric("Stores", f"{total_stores:,}")
+col3.metric("Stores Selected", f"{total_stores:,}")
 
 st.divider()
 
 # ==========================================
-# MONTHLY BAR CHART
+# MONTHLY HISTORICAL SALES
 # ==========================================
-st.subheader("Sales Performance")
+st.subheader("Historical Monthly Sales")
 
 if not filtered_df.empty:
 
@@ -118,38 +123,28 @@ if not filtered_df.empty:
 
     fig, ax = plt.subplots(figsize=(14, 6))
 
-    # Create actual monthly bars
     ax.bar(
-        range(len(monthly_sales)),
+        monthly_sales.index,
         monthly_sales.values,
-        width=0.75
+        width=20,
+        label="Historical Sales"
     )
 
     ax.set_title("Monthly Sales Performance")
     ax.set_xlabel("Month")
     ax.set_ylabel("Total Sales")
-
     ax.grid(axis="y", linestyle="--", alpha=0.4)
+    ax.legend()
 
-    # Show one label every three months
-    tick_positions = range(0, len(monthly_sales), 3)
-
-    ax.set_xticks(list(tick_positions))
-
-    ax.set_xticklabels(
-        monthly_sales.index.strftime("%b %Y")[::3],
-        rotation=45,
-        ha="right"
-    )
-
+    plt.xticks(rotation=45)
     plt.tight_layout()
 
     st.pyplot(fig)
-
     plt.close(fig)
 
 else:
-    st.warning("No sales data available for the selected filters.")
+    st.warning("No sales records found.")
+    st.stop()
 
 st.divider()
 
@@ -158,29 +153,206 @@ st.divider()
 # ==========================================
 st.subheader("Sales Summary")
 
-if not filtered_df.empty:
+daily_sales = filtered_df.groupby("date")["sales"].sum()
 
-    daily_sales = filtered_df.groupby("date")["sales"].sum()
+col1, col2, col3 = st.columns(3)
 
-    total_sales_value = daily_sales.sum()
-    average_daily_sales = daily_sales.mean()
-    highest_daily_sales = daily_sales.max()
+col1.metric(
+    "Total Sales",
+    f"{daily_sales.sum():,.0f}"
+)
 
-    col1, col2, col3 = st.columns(3)
+col2.metric(
+    "Average Daily Sales",
+    f"{daily_sales.mean():,.2f}"
+)
+
+col3.metric(
+    "Highest Daily Sales",
+    f"{daily_sales.max():,.2f}"
+)
+
+st.divider()
+
+# ==========================================
+# FUTURE SALES FORECAST
+# ==========================================
+st.subheader("🔮 Future Sales Forecast")
+
+st.write(
+    "The system uses historical monthly sales patterns "
+    "to estimate sales for the next six months."
+)
+
+if len(monthly_sales) >= 6:
+
+    # Prepare training data
+    forecast_data = monthly_sales.reset_index()
+    forecast_data.columns = ["date", "sales"]
+
+    forecast_data["time_index"] = np.arange(
+        len(forecast_data)
+    )
+
+    # Seasonal features
+    forecast_data["month"] = forecast_data["date"].dt.month
+
+    forecast_data["sin_month"] = np.sin(
+        2 * np.pi * forecast_data["month"] / 12
+    )
+
+    forecast_data["cos_month"] = np.cos(
+        2 * np.pi * forecast_data["month"] / 12
+    )
+
+    X = forecast_data[
+        ["time_index", "sin_month", "cos_month"]
+    ]
+
+    y = forecast_data["sales"]
+
+    # Train model
+    model = LinearRegression()
+    model.fit(X, y)
+
+    # Create next 6 months
+    future_dates = pd.date_range(
+        start=monthly_sales.index[-1] + pd.offsets.MonthBegin(1),
+        periods=6,
+        freq="MS"
+    )
+
+    future_df = pd.DataFrame({
+        "date": future_dates
+    })
+
+    future_df["time_index"] = np.arange(
+        len(forecast_data),
+        len(forecast_data) + 6
+    )
+
+    future_df["month"] = future_df["date"].dt.month
+
+    future_df["sin_month"] = np.sin(
+        2 * np.pi * future_df["month"] / 12
+    )
+
+    future_df["cos_month"] = np.cos(
+        2 * np.pi * future_df["month"] / 12
+    )
+
+    future_X = future_df[
+        ["time_index", "sin_month", "cos_month"]
+    ]
+
+    # Generate predictions
+    future_df["forecast_sales"] = model.predict(future_X)
+
+    # Avoid negative forecasts
+    future_df["forecast_sales"] = future_df[
+        "forecast_sales"
+    ].clip(lower=0)
+
+    # ==========================================
+    # FORECAST METRICS
+    # ==========================================
+    total_forecast = future_df["forecast_sales"].sum()
+    average_forecast = future_df["forecast_sales"].mean()
+
+    col1, col2 = st.columns(2)
 
     col1.metric(
-        "Total Sales",
-        f"{total_sales_value:,.0f}"
+        "Predicted Sales (Next 6 Months)",
+        f"{total_forecast:,.0f}"
     )
 
     col2.metric(
-        "Average Daily Sales",
-        f"{average_daily_sales:,.2f}"
+        "Average Monthly Forecast",
+        f"{average_forecast:,.0f}"
     )
 
-    col3.metric(
-        "Highest Daily Sales",
-        f"{highest_daily_sales:,.2f}"
+    # ==========================================
+    # FORECAST CHART
+    # ==========================================
+    fig, ax = plt.subplots(figsize=(14, 6))
+
+    # Historical bars
+    ax.bar(
+        monthly_sales.index,
+        monthly_sales.values,
+        width=20,
+        label="Historical Sales"
+    )
+
+    # Forecast bars
+    ax.bar(
+        future_df["date"],
+        future_df["forecast_sales"],
+        width=20,
+        label="Forecast Sales"
+    )
+
+    ax.set_title("Historical Sales and 6-Month Forecast")
+    ax.set_xlabel("Month")
+    ax.set_ylabel("Sales")
+    ax.grid(axis="y", linestyle="--", alpha=0.4)
+    ax.legend()
+
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+
+    st.pyplot(fig)
+    plt.close(fig)
+
+    # ==========================================
+    # FORECAST TABLE
+    # ==========================================
+    st.subheader("Forecast Results")
+
+    display_forecast = future_df[
+        ["date", "forecast_sales"]
+    ].copy()
+
+    display_forecast["date"] = (
+        display_forecast["date"].dt.strftime("%B %Y")
+    )
+
+    display_forecast.columns = [
+        "Forecast Month",
+        "Predicted Sales"
+    ]
+
+    display_forecast["Predicted Sales"] = (
+        display_forecast["Predicted Sales"].round(2)
+    )
+
+    st.dataframe(
+        display_forecast,
+        width="stretch",
+        hide_index=True
+    )
+
+    # Forecast CSV download
+    forecast_csv = future_df[
+        ["date", "forecast_sales"]
+    ].to_csv(index=False).encode("utf-8")
+
+    st.download_button(
+        "Download Forecast Results",
+        data=forecast_csv,
+        file_name="six_month_sales_forecast.csv",
+        mime="text/csv"
+    )
+
+    st.caption(
+        "Forecasts are model-based estimates and are not guaranteed "
+        "to represent actual future sales."
+    )
+
+else:
+    st.warning(
+        "At least six months of historical sales data are required "
+        "to generate a forecast."
     )
 
 st.divider()
@@ -197,9 +369,11 @@ st.dataframe(
 )
 
 # ==========================================
-# DOWNLOAD CSV
+# DOWNLOAD FILTERED SALES
 # ==========================================
-csv_data = filtered_df.to_csv(index=False).encode("utf-8")
+csv_data = filtered_df.to_csv(
+    index=False
+).encode("utf-8")
 
 st.download_button(
     label="Download Sales Data as CSV",
@@ -212,5 +386,6 @@ st.download_button(
 # FOOTER
 # ==========================================
 st.caption(
-    "Sales Forecasting System | Developed with Python and Streamlit"
+    "Sales Forecasting System | Python | Pandas | "
+    "Scikit-learn | Streamlit"
 )

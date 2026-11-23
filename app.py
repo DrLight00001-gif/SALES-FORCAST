@@ -2,297 +2,215 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
-from pathlib import Path
 
-# --------------------------------
-# PAGE SETTINGS
-# --------------------------------
-
+# ==========================================
+# PAGE CONFIGURATION
+# ==========================================
 st.set_page_config(
-    page_title="Kwara Small Business Sales Forecasting",
+    page_title="Sales Forecasting System",
     page_icon="📊",
     layout="wide"
 )
 
-# --------------------------------
-# PRODUCT NAMES
-# --------------------------------
+# ==========================================
+# LOAD DATA
+# ==========================================
+@st.cache_data
+def load_data():
+    df = pd.read_csv("data/train.csv")
 
-product_names = {
-    1: "Rice",
-    2: "Sugar",
-    3: "Beans",
-    4: "Garri",
-    5: "Noodles",
-    6: "Vegetable Oil",
-    7: "Semovita",
-    8: "Flour",
-    9: "Spaghetti",
-    10: "Milk",
-    11: "Tomato Paste",
-    12: "Salt",
-    13: "Bread",
-    14: "Indomie",
-    15: "Detergent"
-}
+    df.columns = df.columns.str.strip().str.lower()
 
-# --------------------------------
-# WEBSITE HEADING
-# --------------------------------
+    df["date"] = pd.to_datetime(df["date"])
 
-st.title("📊 Kwara State Small Business Sales Forecasting System")
+    return df
+
+df = load_data()
+
+# ==========================================
+# TITLE
+# ==========================================
+st.title("Sales Forecasting System")
 
 st.write(
-    "A sales analysis and forecasting platform designed "
-    "to help small businesses in Kwara State understand "
-    "their sales performance and plan for future demand."
+    "An interactive dashboard for analysing sales performance, "
+    "stores, products, and sales trends."
 )
+
+# ==========================================
+# SIDEBAR FILTERS
+# ==========================================
+st.sidebar.header("Dashboard Filters")
+
+# Store filter
+stores = ["All Stores"] + sorted(df["store"].unique().tolist())
+
+selected_store = st.sidebar.selectbox(
+    "Select Store",
+    stores
+)
+
+# Product filter
+items = ["All Products"] + sorted(df["item"].unique().tolist())
+
+selected_item = st.sidebar.selectbox(
+    "Select Product",
+    items
+)
+
+# Year filter
+available_years = sorted(df["date"].dt.year.unique().tolist())
+
+selected_years = st.sidebar.multiselect(
+    "Select Year(s)",
+    available_years,
+    default=available_years
+)
+
+# ==========================================
+# FILTER DATA
+# ==========================================
+filtered_df = df.copy()
+
+if selected_store != "All Stores":
+    filtered_df = filtered_df[
+        filtered_df["store"] == selected_store
+    ]
+
+if selected_item != "All Products":
+    filtered_df = filtered_df[
+        filtered_df["item"] == selected_item
+    ]
+
+filtered_df = filtered_df[
+    filtered_df["date"].dt.year.isin(selected_years)
+]
+
+# ==========================================
+# DASHBOARD METRICS
+# ==========================================
+st.subheader("Sales Overview")
+
+total_records = len(filtered_df)
+total_sales = filtered_df["sales"].sum()
+total_stores = filtered_df["store"].nunique()
+
+col1, col2, col3 = st.columns(3)
+
+col1.metric("Total Records", f"{total_records:,}")
+col2.metric("Total Sales", f"{total_sales:,.0f}")
+col3.metric("Stores", f"{total_stores:,}")
 
 st.divider()
 
-# --------------------------------
-# LOAD DATASET
-# --------------------------------
+# ==========================================
+# MONTHLY BAR CHART
+# ==========================================
+st.subheader("Sales Performance")
 
-data_path = Path("data/train.csv")
+if not filtered_df.empty:
 
-if data_path.exists():
-
-    df = pd.read_csv(data_path)
-
-    df["date"] = pd.to_datetime(
-        df["date"],
-        errors="coerce"
+    monthly_sales = (
+        filtered_df.set_index("date")
+        .resample("MS")["sales"]
+        .sum()
     )
 
-    df["sales"] = pd.to_numeric(
-        df["sales"],
-        errors="coerce"
+    fig, ax = plt.subplots(figsize=(14, 6))
+
+    # Create actual monthly bars
+    ax.bar(
+        range(len(monthly_sales)),
+        monthly_sales.values,
+        width=0.75
     )
 
-    df = df.dropna(
-        subset=["date", "sales", "store", "item"]
+    ax.set_title("Monthly Sales Performance")
+    ax.set_xlabel("Month")
+    ax.set_ylabel("Total Sales")
+
+    ax.grid(axis="y", linestyle="--", alpha=0.4)
+
+    # Show one label every three months
+    tick_positions = range(0, len(monthly_sales), 3)
+
+    ax.set_xticks(list(tick_positions))
+
+    ax.set_xticklabels(
+        monthly_sales.index.strftime("%b %Y")[::3],
+        rotation=45,
+        ha="right"
     )
 
-    df["item"] = pd.to_numeric(
-        df["item"],
-        errors="coerce"
-    )
+    plt.tight_layout()
 
-    df = df.dropna(subset=["item"])
-    df["item"] = df["item"].astype(int)
+    st.pyplot(fig)
 
-    st.success("Sales dataset loaded successfully!")
+    plt.close(fig)
 
-    # --------------------------------
-    # SUMMARY INFORMATION
-    # --------------------------------
+else:
+    st.warning("No sales data available for the selected filters.")
 
-    st.subheader("Business Performance Overview")
+st.divider()
+
+# ==========================================
+# SALES SUMMARY
+# ==========================================
+st.subheader("Sales Summary")
+
+if not filtered_df.empty:
+
+    daily_sales = filtered_df.groupby("date")["sales"].sum()
+
+    total_sales_value = daily_sales.sum()
+    average_daily_sales = daily_sales.mean()
+    highest_daily_sales = daily_sales.max()
 
     col1, col2, col3 = st.columns(3)
 
-    with col1:
-        st.metric(
-            "Total Sales Records",
-            f"{len(df):,}"
-        )
-
-    with col2:
-        st.metric(
-            "Total Units Sold",
-            f"{df['sales'].sum():,.0f}"
-        )
-
-    with col3:
-        st.metric(
-            "Number of Businesses",
-            f"{df['store'].nunique():,}"
-        )
-
-    st.divider()
-
-    # --------------------------------
-    # EXPLORE SALES DATA
-    # --------------------------------
-
-    st.subheader("Explore Sales Data")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-
-        products = sorted(df["item"].unique())
-
-        selected_product = st.selectbox(
-            "Select Product",
-            products,
-            format_func=lambda x: product_names.get(
-                x, f"Product {x}"
-            )
-        )
-
-    with col2:
-
-        stores = sorted(df["store"].unique())
-
-        selected_store = st.selectbox(
-            "Select Business",
-            stores
-        )
-
-    # --------------------------------
-    # YEAR SELECTION
-    # --------------------------------
-
-    years = sorted(
-        df["date"].dt.year.unique()
+    col1.metric(
+        "Total Sales",
+        f"{total_sales_value:,.0f}"
     )
 
-    selected_years = st.multiselect(
-        "Select Years to View",
-        years,
-        default=years
+    col2.metric(
+        "Average Daily Sales",
+        f"{average_daily_sales:,.2f}"
     )
 
-    # --------------------------------
-    # FILTER SALES DATA
-    # --------------------------------
-
-    filtered = df[
-        (df["item"] == selected_product) &
-        (df["store"] == selected_store) &
-        (df["date"].dt.year.isin(selected_years))
-    ].sort_values("date")
-
-    st.divider()
-
-    # --------------------------------
-    # SELECTED BUSINESS INFORMATION
-    # --------------------------------
-
-    st.subheader("Selected Business Information")
-
-    st.write(f"**Business:** {selected_store}")
-
-    st.write(
-        f"**Product:** "
-        f"{product_names.get(selected_product, 'Unknown Product')}"
+    col3.metric(
+        "Highest Daily Sales",
+        f"{highest_daily_sales:,.2f}"
     )
 
-    st.write(
-        f"**Years Selected:** "
-        f"{', '.join(map(str, selected_years)) if selected_years else 'None'}"
-    )
+st.divider()
 
-    # --------------------------------
-    # HISTORICAL SALES GRAPH
-    # --------------------------------
+# ==========================================
+# SALES RECORDS
+# ==========================================
+st.subheader("Sales Records")
 
-    st.subheader("Historical Sales Analysis")
+st.dataframe(
+    filtered_df,
+    width="stretch",
+    hide_index=True
+)
 
-    if not filtered.empty:
+# ==========================================
+# DOWNLOAD CSV
+# ==========================================
+csv_data = filtered_df.to_csv(index=False).encode("utf-8")
 
-        fig, ax = plt.subplots(figsize=(12, 5))
+st.download_button(
+    label="Download Sales Data as CSV",
+    data=csv_data,
+    file_name="sales_records.csv",
+    mime="text/csv"
+)
 
-        ax.plot(
-            filtered["date"],
-            filtered["sales"],
-            linewidth=1.2,
-            label="Historical Sales"
-        )
-
-        ax.set_xlabel("Date")
-        ax.set_ylabel("Units Sold")
-
-        ax.set_title(
-            f"{product_names.get(selected_product)} Sales "
-            f"at {selected_store}"
-        )
-
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-
-        fig.tight_layout()
-
-        st.pyplot(fig)
-
-        plt.close(fig)
-
-        # --------------------------------
-        # FILTERED SALES SUMMARY
-        # --------------------------------
-
-        st.subheader("Selected Sales Summary")
-
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            st.metric(
-                "Total Units Sold",
-                f"{filtered['sales'].sum():,.0f}"
-            )
-
-        with col2:
-            st.metric(
-                "Average Daily Sales",
-                f"{filtered['sales'].mean():,.2f}"
-            )
-
-        with col3:
-            st.metric(
-                "Highest Daily Sales",
-                f"{filtered['sales'].max():,.0f}"
-            )
-
-        # --------------------------------
-        # SALES RECORDS
-        # --------------------------------
-
-        st.subheader("Sales Records")
-
-        display_data = filtered.copy()
-
-        display_data["item"] = display_data["item"].map(
-            lambda x: product_names.get(x, f"Product {x}")
-        )
-
-        st.dataframe(
-            display_data.tail(20),
-            use_container_width=True
-        )
-
-        # --------------------------------
-        # DOWNLOAD DATA
-        # --------------------------------
-
-        st.download_button(
-            "Download Filtered Sales Data",
-            data=filtered.to_csv(index=False),
-            file_name="kwara_filtered_sales.csv",
-            mime="text/csv"
-        )
-
-    else:
-
-        st.warning(
-            "No sales records found for your selected options."
-        )
-
-    # --------------------------------
-    # FOOTER
-    # --------------------------------
-
-    st.divider()
-
-    st.caption(
-        "Kwara State Small Business Sales Forecasting System | "
-        "Academic Project Demonstration | 2019–2025"
-    )
-
-else:
-
-    st.error(
-        "Dataset not found. Make sure data/train.csv "
-        "exists inside your project folder."
-    )
+# ==========================================
+# FOOTER
+# ==========================================
+st.caption(
+    "Sales Forecasting System | Developed with Python and Streamlit"
+)
